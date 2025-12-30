@@ -1,306 +1,389 @@
-import sqlite3
-import json
-from datetime import datetime, timedelta
-import matplotlib.pyplot as plt
-import pandas as pd
-from collections import Counter
-import numpy as np
-
-class CompleteLifeOrganizer:
-    def __init__(self, db_path="complete_life.db"):
-        self.db_path = db_path
-        self.init_db()
-    
-    def init_db(self):
-        """Initialize all tables for habits, moods, expenses, income"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        # Habits table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS habits (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                date TEXT NOT NULL,
-                completed INTEGER DEFAULT 0,
-                notes TEXT
-            )
-        ''')
-        
-        # Moods table (1-10 scale)
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS moods (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                date TEXT NOT NULL,
-                mood_score INTEGER CHECK(mood_score >=1 AND mood_score <=10),
-                notes TEXT
-            )
-        ''')
-        
-        # Expenses table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS expenses (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                date TEXT NOT NULL,
-                amount REAL NOT NULL,
-                category TEXT NOT NULL,
-                description TEXT
-            )
-        ''')
-        
-        # Income table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS income (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                date TEXT NOT NULL,
-                amount REAL NOT NULL,
-                source TEXT NOT NULL,
-                description TEXT
-            )
-        ''')
-        
-        conn.commit()
-        conn.close()
-        print("✅ CompleteLife DB initialized - Habits + Moods + Finance ready!")
-
-    def add_habit(self, name, date=None, completed=0, notes=""):
-        """Add or update habit for specific date"""
-        if not date:
-            date = datetime.now().strftime("%Y-%m-%d")
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT OR REPLACE INTO habits (name, date, completed, notes)
-            VALUES (?, ?, ?, ?)
-        ''', (name, date, completed, notes))
-        conn.commit()
-        conn.close()
-
-    def log_mood(self, mood_score, date=None, notes=""):
-        """Log daily mood (1-10 scale)"""
-        if not date:
-            date = datetime.now().strftime("%Y-%m-%d")
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT OR REPLACE INTO moods (date, mood_score, notes)
-            VALUES (?, ?, ?)
-        ''', (date, mood_score, notes))
-        conn.commit()
-        conn.close()
-
-    def add_expense(self, amount, category, description="", date=None):
-        """Track expense with category"""
-        if not date:
-            date = datetime.now().strftime("%Y-%m-%d")
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO expenses (date, amount, category, description)
-            VALUES (?, ?, ?, ?)
-        ''', (date, amount, category, description))
-        conn.commit()
-        conn.close()
-
-    def add_income(self, amount, source, description="", date=None):
-        """Track income source"""
-        if not date:
-            date = datetime.now().strftime("%Y-%m-%d")
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO income (date, amount, source, description)
-            VALUES (?, ?, ?, ?)
-        ''', (date, amount, source, description))
-        conn.commit()
-        conn.close()
-
-    def get_period_data(self, table, period="daily"):
-        """Get data for specific period"""
-        conn = sqlite3.connect(self.db_path)
-        df = pd.read_sql_query(f"SELECT * FROM {table}", conn)
-        conn.close()
-        
-        if df.empty:
-            return df
-        
-        df['date'] = pd.to_datetime(df['date'])
-        today = datetime.now().date()
-        
-        if period == "daily":
-            return df[df['date'].dt.date == today]
-        elif period == "weekly":
-            week_start = today - timedelta(days=today.weekday())
-            return df[(df['date'].dt.date >= week_start) & (df['date'].dt.date <= today)]
-        elif period == "monthly":
-            return df[df['date'].dt.to_period('M') == today.to_period('M')]
-        elif period == "yearly":
-            return df[df['date'].dt.year == today.year]
-        return df
-
-    def habit_stats(self):
-        """Get comprehensive habit statistics"""
-        weekly = self.get_period_data('habits', 'weekly')
-        if weekly.empty:
-            return {"completion_rate": 0, "current_streak": 0}
-        
-        total = len(weekly)
-        completed = len(weekly[weekly['completed'] == 1])
-        completion_rate = (completed / total * 100) if total > 0 else 0
-        
-        # Simple streak calculation
-        today = datetime.now().strftime("%Y-%m-%d")
-        streak = 0
-        for i in range(7, 0, -1):
-            check_date = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
-            if len(weekly[(weekly['date'] == check_date) & (weekly['completed'] == 1)]) > 0:
-                streak += 1
-            else:
-                break
-                
-        return {"completion_rate": completion_rate, "current_streak": streak}
-
-    def finance_summary(self, period="monthly"):
-        """Complete finance overview"""
-        expenses = self.get_period_data('expenses', period)
-        income_data = self.get_period_data('income', period)
-        
-        total_expenses = expenses['amount'].sum() if not expenses.empty else 0
-        total_income = income_data['amount'].sum() if not income_data.empty else 0
-        savings = total_income - total_expenses
-        
-        expense_by_category = expenses.groupby('category')['amount'].sum().to_dict()
-        
-        return {
-            'total_expenses': total_expenses,
-            'total_income': total_income,
-            'savings': savings,
-            'expense_by_category': expense_by_category
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Your Complete Life Organizer</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: 'Segoe UI', -apple-system, sans-serif; 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: white;
         }
+        .container { max-width: 400px; margin: 0 auto; padding: 20px; }
+        .header { text-align: center; margin-bottom: 30px; }
+        .app-title { font-size: 28px; font-weight: 800; margin-bottom: 5px; }
+        .subtitle { font-size: 14px; opacity: 0.9; }
+        
+        .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 25px; }
+        .tab { 
+            background: rgba(255,255,255,0.15); 
+            border-radius: 16px; 
+            padding: 20px; 
+            text-align: center; 
+            cursor: pointer; 
+            transition: all 0.3s;
+            backdrop-filter: blur(10px);
+        }
+        .tab:hover { background: rgba(255,255,255,0.25); transform: translateY(-2px); }
+        .tab.active { background: rgba(255,255,255,0.3); }
+        .tab-icon { font-size: 28px; display: block; margin-bottom: 8px; }
+        .tab-text { font-size: 14px; font-weight: 600; }
+        
+        .content { display: none; background: rgba(255,255,255,0.1); border-radius: 20px; padding: 25px; backdrop-filter: blur(20px); }
+        .content.active { display: block; }
+        
+        .section-title { font-size: 20px; margin-bottom: 20px; text-align: center; }
+        
+        /* Habits */
+        .habit-list { max-height: 300px; overflow-y: auto; margin-bottom: 20px; }
+        .habit-item { 
+            background: rgba(255,255,255,0.2); 
+            margin-bottom: 12px; 
+            padding: 15px; 
+            border-radius: 12px; 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center;
+        }
+        .habit-name { font-weight: 600; }
+        .habit-stats { font-size: 12px; opacity: 0.8; }
+        .habit-complete { background: #10b981; color: white; border: none; padding: 8px 16px; border-radius: 8px; cursor: pointer; }
+        .habit-miss { background: #ef4444; color: white; border: none; padding: 8px 16px; border-radius: 8px; cursor: pointer; }
+        .habit-empty { background: transparent; border: 2px solid rgba(255,255,255,0.5); color: rgba(255,255,255,0.7); padding: 6px 12px; border-radius: 8px; cursor: pointer; }
+        
+        /* Money */
+        .money-input { display: flex; gap: 10px; margin-bottom: 15px; }
+        .input-group { flex: 1; }
+        input { width: 100%; padding: 12px; border: none; border-radius: 10px; background: rgba(255,255,255,0.2); color: white; font-size: 16px; }
+        input::placeholder { color: rgba(255,255,255,0.7); }
+        .btn { 
+            background: linear-gradient(45deg, #10b981, #059669); 
+            color: white; 
+            border: none; 
+            padding: 12px 24px; 
+            border-radius: 12px; 
+            font-weight: 600; 
+            cursor: pointer; 
+            transition: transform 0.2s;
+        }
+        .btn:hover { transform: scale(1.05); }
+        .btn-secondary { background: linear-gradient(45deg, #3b82f6, #2563eb); }
+        .summary { background: rgba(0,0,0,0.2); padding: 15px; border-radius: 12px; margin-top: 15px; }
+        
+        /* Moods */
+        .mood-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-bottom: 20px; }
+        .mood-btn { 
+            aspect-ratio: 1; 
+            border-radius: 12px; 
+            border: none; 
+            font-size: 24px; 
+            cursor: pointer; 
+            transition: all 0.3s;
+        }
+        .mood-1 { background: #ef4444; }
+        .mood-2 { background: #f97316; }
+        .mood-3 { background: #eab308; }
+        .mood-4 { background: #84cc16; }
+        .mood-5 { background: #10b981; }
+        .mood-6 { background: #06b6d4; }
+        .mood-7 { background: #0ea5e9; }
+        .mood-8 { background: #3b82f6; }
+        .mood-9 { background: #8b5cf6; }
+        .mood-10 { background: #ec4899; }
+        .mood-btn.today { transform: scale(1.1); box-shadow: 0 8px 25px rgba(0,0,0,0.3); }
+        
+        /* Charts */
+        .chart { height: 200px; background: rgba(0,0,0,0.3); border-radius: 12px; margin-top: 15px; position: relative; }
+        .chart-bar { position: absolute; bottom: 0; background: linear-gradient(45deg, #10b981, #059669); border-radius: 6px 6px 0 0; }
+        
+        .add-habit { display: flex; gap: 10px; margin-bottom: 15px; }
+        .habit-input { flex: 1; }
+        
+        .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 20px; }
+        .stat-card { background: rgba(255,255,255,0.15); padding: 15px; border-radius: 12px; text-align: center; }
+        .stat-value { font-size: 24px; font-weight: 800; }
+        .stat-label { font-size: 12px; opacity: 0.8; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="app-title">Your Complete Life</div>
+            <div class="subtitle">4 Organizer Tools in 1 App</div>
+        </div>
+        
+        <div class="tabs">
+            <div class="tab active" onclick="switchTab('habits')">
+                <span class="tab-icon">✅</span>
+                <div class="tab-text">Habits</div>
+            </div>
+            <div class="tab" onclick="switchTab('moods')">
+                <span class="tab-icon">😊</span>
+                <div class="tab-text">Moods</div>
+            </div>
+            <div class="tab" onclick="switchTab('money')">
+                <span class="tab-icon">💰</span>
+                <div class="tab-text">Money</div>
+            </div>
+            <div class="tab" onclick="switchTab('journal')">
+                <span class="tab-icon">📝</span>
+                <div class="tab-text">Journal</div>
+            </div>
+        </div>
+        
+        <!-- HABITS -->
+        <div id="habits" class="content active">
+            <div class="section-title">📊 Daily Habits</div>
+            <div class="add-habit">
+                <input type="text" id="habitInput" placeholder="New habit..." class="habit-input">
+                <button class="btn" onclick="addHabit()">Add</button>
+            </div>
+            <div class="habit-list" id="habitList"></div>
+            <div class="stats">
+                <div class="stat-card">
+                    <div class="stat-value" id="streakCount">0</div>
+                    <div class="stat-label">Current Streak</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="completionRate">0%</div>
+                    <div class="stat-label">Completion</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- MOODS -->
+        <div id="moods" class="content">
+            <div class="section-title">😊 Today's Mood</div>
+            <div class="mood-grid" id="moodGrid"></div>
+            <div class="chart" id="moodChart">
+                <div class="chart-bar" style="left:10%; width:8%; height:80%"></div>
+                <div class="chart-bar" style="left:25%; width:8%; height:60%"></div>
+                <div class="chart-bar" style="left:40%; width:8%; height:90%"></div>
+                <div class="chart-bar" style="left:55%; width:8%; height:40%"></div>
+                <div class="chart-bar" style="left:70%; width:8%; height:70%"></div>
+            </div>
+            <div class="stats">
+                <div class="stat-card">
+                    <div class="stat-value" id="avgMood">5.0</div>
+                    <div class="stat-label">Avg Mood</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="moodStreak">3</div>
+                    <div class="stat-label">Mood Streak</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- MONEY -->
+        <div id="money" class="content">
+            <div class="section-title">💰 Finance Tracker</div>
+            <div class="money-input">
+                <input type="number" id="amountInput" placeholder="₹ 100">
+                <input type="text" id="categoryInput" placeholder="Food/Transport/etc">
+            </div>
+            <div style="display: flex; gap: 10px;">
+                <button class="btn" onclick="addExpense()">➕ Expense</button>
+                <button class="btn btn-secondary" onclick="addIncome()">💵 Income</button>
+            </div>
+            <div class="summary">
+                <div>Monthly Expenses: <span id="totalExpenses">₹0</span></div>
+                <div>Monthly Income: <span id="totalIncome">₹0</span></div>
+                <div>Savings: <span id="savings">₹0</span></div>
+            </div>
+        </div>
+        
+        <!-- JOURNAL -->
+        <div id="journal" class="content">
+            <div class="section-title">📝 Daily Journal</div>
+            <textarea id="journalText" rows="8" placeholder="What's on your mind today? 💭" style="width:100%; padding:15px; border-radius:12px; border:none; background:rgba(255,255,255,0.15); color:white; font-size:16px; resize:vertical;"></textarea>
+            <button class="btn" onclick="saveJournal()" style="margin-top:15px;">💾 Save Entry</button>
+            <div id="journalEntries"></div>
+        </div>
+    </div>
 
-    def mood_trend(self):
-        """Get mood analytics"""
-        monthly = self.get_period_data('moods', 'monthly')
-        if monthly.empty:
-            return {"avg_mood": 5, "mood_distribution": {}}
+    <script>
+        let data = JSON.parse(localStorage.getItem('completeLifeData')) || {
+            habits: {},
+            moods: {},
+            expenses: [],
+            income: [],
+            journal: []
+        };
+        let today = new Date().toISOString().split('T')[0];
         
-        avg_mood = monthly['mood_score'].mean()
-        mood_dist = Counter(monthly['mood_score']).most_common()
+        function saveData() {
+            localStorage.setItem('completeLifeData', JSON.stringify(data));
+        }
         
-        return {"avg_mood": avg_mood, "mood_distribution": dict(mood_dist)}
-
-    def show_dashboard(self):
-        """Main dashboard - ALL sections at once"""
-        print("
-" + "="*60)
-        print("🧠 COMPLETE LIFE ORGANIZER - DASHBOARD")
-        print("="*60)
-        
-        # Habits
-        habit_stats = self.habit_stats()
-        print(f"
-📊 HABITS ({habit_stats['current_streak']}🔥 streak)")
-        print(f"   Completion: {habit_stats['completion_rate']:.1f}%")
-        
-        # Finance
-        finance = self.finance_summary()
-        print(f"
-💰 FINANCE (Monthly)")
-        print(f"   Expenses: ₹{finance['total_expenses']:,.0f}")
-        print(f"   Income: ₹{finance['total_income']:,.0f}")
-        print(f"   Savings: ₹{finance['savings']:,.0f}")
-        print(f"   Top Expense: {max(finance['expense_by_category'].items(), key=lambda x: x[1], default=('None', 0))}")
-        
-        # Moods
-        mood_stats = self.mood_trend()
-        print(f"
-😊 MOODS")
-        print(f"   Average: {mood_stats['avg_mood']:.1f}/10")
-        print(f"   Distribution: {mood_stats['mood_distribution']}")
-
-    def show_charts(self):
-        """Generate all charts"""
-        fig, axes = plt.subplots(2, 2, figsize=(15, 12))
-        fig.suptitle('Complete Life Analytics', fontsize=16)
-        
-        # 1. Expense pie chart
-        expenses = self.get_period_data('expenses', 'monthly')
-        if not expenses.empty:
-            cat_exp = expenses.groupby('category')['amount'].sum()
-            axes[0,0].pie(cat_exp.values, labels=cat_exp.index, autopct='%1.1f%%')
-            axes[0,0].set_title('Monthly Expenses by Category')
-        
-        # 2. Habit completion bar
-        habits_week = self.get_period_data('habits', 'weekly')
-        if not habits_week.empty:
-            habit_comp = habits_week.groupby('name')['completed'].mean() * 100
-            axes[0,1].bar(habit_comp.index, habit_comp.values)
-            axes[0,1].set_title('Habit Completion %')
-            axes[0,1].tick_params(axis='x', rotation=45)
-        
-        # 3. Mood trend line
-        moods = self.get_period_data('moods', 'monthly')
-        if not moods.empty:
-            mood_df = moods.set_index('date')['mood_score']
-            axes[1,0].plot(mood_df.index, mood_df.values, marker='o')
-            axes[1,0].set_title('Daily Mood Trend')
-            axes[1,0].tick_params(axis='x', rotation=45)
-        
-        # 4. Net worth trend (income - expenses)
-        plt.tight_layout()
-        plt.savefig('life_analytics.png', dpi=300, bbox_inches='tight')
-        plt.show()
-        print("📈 Charts saved as 'life_analytics.png'")
-
-# 🚀 MAIN APP - Your Complete Life Organizer
-if __name__ == "__main__":
-    app = CompleteLifeOrganizer()
-    
-    while True:
-        print("
-🎯 COMPLETE LIFE ORGANIZER")
-        print("1. 📝 Quick Log (Habit/Mood/Expense)")
-        print("2. 💰 Add Income")
-        print("3. 📊 Dashboard")
-        print("4. 📈 Show Charts")
-        print("5. ❌ Exit")
-        
-        choice = input("
-Choose (1-5): ").strip()
-        
-        if choice == "1":
-            print("
-🧠 What to log?")
-            print("a) Habit | b) Mood | c) Expense")
-            sub = input("Choose (a/b/c): ").strip().lower()
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.content').forEach(c => c.classList.remove('active'));
             
-            if sub == "a":
-                name = input("Habit name: ")
-                completed = int(input("Completed? (1=Yes/0=No): "))
-                app.add_habit(name, completed=completed)
+            event.target.closest('.tab').classList.add('active');
+            document.getElementById(tabName).classList.add('active');
+            
+            if (tabName === 'habits') refreshHabits();
+            if (tabName === 'moods') refreshMoods();
+            if (tabName === 'money') refreshFinance();
+            if (tabName === 'journal') refreshJournal();
+        }
+        
+        function addHabit() {
+            let name = document.getElementById('habitInput').value.trim();
+            if (!name) return;
+            
+            if (!data.habits[name]) data.habits[name] = {};
+            data.habits[name][today] = data.habits[name][today] || 0;
+            saveData();
+            document.getElementById('habitInput').value = '';
+            refreshHabits();
+        }
+        
+        function toggleHabit(name) {
+            data.habits[name][today] = (data.habits[name][today] || 0) + 1;
+            if (data.habits[name][today] > 2) data.habits[name][today] = 0;
+            saveData();
+            refreshHabits();
+        }
+        
+        function refreshHabits() {
+            let list = document.getElementById('habitList');
+            list.innerHTML = '';
+            
+            let total = 0, completed = 0;
+            Object.keys(data.habits).forEach(name => {
+                let todayStatus = data.habits[name][today] || 0;
+                let item = document.createElement('div');
+                item.className = 'habit-item';
+                item.innerHTML = `
+                    <div>
+                        <div class="habit-name">${name}</div>
+                        <div class="habit-stats">Streak: ${getStreak(name)} days</div>
+                    </div>
+                    <button class="habit-${todayStatus === 1 ? 'complete' : todayStatus === 2 ? 'miss' : 'empty'}" 
+                            onclick="toggleHabit('${name}')">
+                        ${todayStatus === 1 ? '✅' : todayStatus === 2 ? '❌' : '○'}
+                    </button>
+                `;
+                list.appendChild(item);
                 
-            elif sub == "b":
-                mood = int(input("Mood (1-10): "))
-                app.log_mood(mood)
-                
-            elif sub == "c":
-                amount = float(input("Amount (₹): "))
-                cat = input("Category (Food/Transport/etc): ")
-                desc = input("Description: ")
-                app.add_expense(amount, cat, desc)
-                
-        elif choice == "2":
-            amount = float(input("Income amount (₹): "))
-            source = input("Source (Salary/Freelance/etc): ")
-            desc = input("Description: ")
-            app.add_income(amount, source, desc)
+                total++;
+                if (todayStatus === 1) completed++;
+            });
             
-        elif choice == "3":
-            app.show_dashboard()
+            document.getElementById('completionRate').textContent = total ? `${Math.round(completed/total*100)}%` : '0%';
+            document.getElementById('streakCount').textContent = getLongestStreak();
+        }
+        
+        function getStreak(name) {
+            let streak = 0;
+            let date = new Date(today);
+            for (let i = 0; i < 30; i++) {
+                let checkDate = date.toISOString().split('T')[0];
+                if (data.habits[name][checkDate] === 1) streak++;
+                else break;
+                date.setDate(date.getDate() - 1);
+            }
+            return streak;
+        }
+        
+        function getLongestStreak() {
+            let maxStreak = 0;
+            Object.keys(data.habits).forEach(name => {
+                maxStreak = Math.max(maxStreak, getStreak(name));
+            });
+            return maxStreak;
+        }
+        
+        function refreshMoods() {
+            let grid = document.getElementById('moodGrid');
+            grid.innerHTML = '';
+            for (let i = 1; i <= 10; i++) {
+                let btn = document.createElement('button');
+                btn.className = `mood-btn mood-${i}`;
+                btn.textContent = i;
+                btn.onclick = () => logMood(i);
+                if (data.moods[today] === i) btn.classList.add('today');
+                grid.appendChild(btn);
+            }
+        }
+        
+        function logMood(score) {
+            data.moods[today] = score;
+            saveData();
+            refreshMoods();
+        }
+        
+        function addExpense() {
+            let amount = parseFloat(document.getElementById('amountInput').value);
+            let category = document.getElementById('categoryInput').value;
+            if (amount && category) {
+                data.expenses.push({date: today, amount, category, type: 'expense'});
+                document.getElementById('amountInput').value = '';
+                document.getElementById('categoryInput').value = '';
+                saveData();
+                refreshFinance();
+            }
+        }
+        
+        function addIncome() {
+            let amount = parseFloat(document.getElementById('amountInput').value);
+            let source = document.getElementById('categoryInput').value;
+            if (amount && source) {
+                data.income.push({date: today, amount, source, type: 'income'});
+                document.getElementById('amountInput').value = '';
+                document.getElementById('categoryInput').value = '';
+                saveData();
+                refreshFinance();
+            }
+        }
+        
+        function refreshFinance() {
+            let month = today.slice(0,7);
+            let expenses = data.expenses.filter(e => e.date.startsWith(month));
+            let income = data.income.filter(i => i.date.startsWith(month));
             
-        elif choice == "4":
-            app.show_charts()
-            
-        elif choice == "5":
-            print("✨ Data saved locally. Keep building your ₹1cr empire! 💪")
-            break
+            document.getElementById('totalExpenses').textContent = `₹${expenses.reduce((sum,e)=>sum+e.amount,0).toLocaleString()}`;
+            document.getElementById('totalIncome').textContent = `₹${income.reduce((sum,i)=>sum+i.amount,0).toLocaleString()}`;
+            document.getElementById('savings').textContent = `₹${(income.reduce((sum,i)=>sum+i.amount,0) - expenses.reduce((sum,e)=>sum+e.amount,0)).toLocaleString()}`;
+        }
+        
+        function saveJournal() {
+            let text = document.getElementById('journalText').value.trim();
+            if (text) {
+                data.journal.unshift({date: today, text});
+                if (data.journal.length > 30) data.journal.pop();
+                document.getElementById('journalText').value = '';
+                saveData();
+                refreshJournal();
+            }
+        }
+        
+        function refreshJournal() {
+            let entries = document.getElementById('journalEntries');
+            entries.innerHTML = data.journal.slice(0,5).map(e => 
+                `<div style="background:rgba(255,255,255,0.15);padding:15px;margin-bottom:10px;border-radius:12px;">
+                    <div style="font-size:12px;opacity:0.8;">${e.date}</div>
+                    ${e.text}
+                </div>`
+            ).join('');
+        }
+        
+        // Initialize
+        refreshHabits();
+        refreshMoods();
+        refreshFinance();
+        refreshJournal();
+        
+        // PWA Install
+        let deferredPrompt;
+        window.addEventListener('beforeinstallprompt', (e) => {
+            e.preventDefault();
+            deferredPrompt = e;
+        });
+    </script>
+</body>
+                </html>
