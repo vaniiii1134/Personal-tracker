@@ -1,0 +1,306 @@
+import sqlite3
+import json
+from datetime import datetime, timedelta
+import matplotlib.pyplot as plt
+import pandas as pd
+from collections import Counter
+import numpy as np
+
+class CompleteLifeOrganizer:
+    def __init__(self, db_path="complete_life.db"):
+        self.db_path = db_path
+        self.init_db()
+    
+    def init_db(self):
+        """Initialize all tables for habits, moods, expenses, income"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        # Habits table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS habits (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                date TEXT NOT NULL,
+                completed INTEGER DEFAULT 0,
+                notes TEXT
+            )
+        ''')
+        
+        # Moods table (1-10 scale)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS moods (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL,
+                mood_score INTEGER CHECK(mood_score >=1 AND mood_score <=10),
+                notes TEXT
+            )
+        ''')
+        
+        # Expenses table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS expenses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL,
+                amount REAL NOT NULL,
+                category TEXT NOT NULL,
+                description TEXT
+            )
+        ''')
+        
+        # Income table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS income (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL,
+                amount REAL NOT NULL,
+                source TEXT NOT NULL,
+                description TEXT
+            )
+        ''')
+        
+        conn.commit()
+        conn.close()
+        print("✅ CompleteLife DB initialized - Habits + Moods + Finance ready!")
+
+    def add_habit(self, name, date=None, completed=0, notes=""):
+        """Add or update habit for specific date"""
+        if not date:
+            date = datetime.now().strftime("%Y-%m-%d")
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT OR REPLACE INTO habits (name, date, completed, notes)
+            VALUES (?, ?, ?, ?)
+        ''', (name, date, completed, notes))
+        conn.commit()
+        conn.close()
+
+    def log_mood(self, mood_score, date=None, notes=""):
+        """Log daily mood (1-10 scale)"""
+        if not date:
+            date = datetime.now().strftime("%Y-%m-%d")
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT OR REPLACE INTO moods (date, mood_score, notes)
+            VALUES (?, ?, ?)
+        ''', (date, mood_score, notes))
+        conn.commit()
+        conn.close()
+
+    def add_expense(self, amount, category, description="", date=None):
+        """Track expense with category"""
+        if not date:
+            date = datetime.now().strftime("%Y-%m-%d")
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO expenses (date, amount, category, description)
+            VALUES (?, ?, ?, ?)
+        ''', (date, amount, category, description))
+        conn.commit()
+        conn.close()
+
+    def add_income(self, amount, source, description="", date=None):
+        """Track income source"""
+        if not date:
+            date = datetime.now().strftime("%Y-%m-%d")
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO income (date, amount, source, description)
+            VALUES (?, ?, ?, ?)
+        ''', (date, amount, source, description))
+        conn.commit()
+        conn.close()
+
+    def get_period_data(self, table, period="daily"):
+        """Get data for specific period"""
+        conn = sqlite3.connect(self.db_path)
+        df = pd.read_sql_query(f"SELECT * FROM {table}", conn)
+        conn.close()
+        
+        if df.empty:
+            return df
+        
+        df['date'] = pd.to_datetime(df['date'])
+        today = datetime.now().date()
+        
+        if period == "daily":
+            return df[df['date'].dt.date == today]
+        elif period == "weekly":
+            week_start = today - timedelta(days=today.weekday())
+            return df[(df['date'].dt.date >= week_start) & (df['date'].dt.date <= today)]
+        elif period == "monthly":
+            return df[df['date'].dt.to_period('M') == today.to_period('M')]
+        elif period == "yearly":
+            return df[df['date'].dt.year == today.year]
+        return df
+
+    def habit_stats(self):
+        """Get comprehensive habit statistics"""
+        weekly = self.get_period_data('habits', 'weekly')
+        if weekly.empty:
+            return {"completion_rate": 0, "current_streak": 0}
+        
+        total = len(weekly)
+        completed = len(weekly[weekly['completed'] == 1])
+        completion_rate = (completed / total * 100) if total > 0 else 0
+        
+        # Simple streak calculation
+        today = datetime.now().strftime("%Y-%m-%d")
+        streak = 0
+        for i in range(7, 0, -1):
+            check_date = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
+            if len(weekly[(weekly['date'] == check_date) & (weekly['completed'] == 1)]) > 0:
+                streak += 1
+            else:
+                break
+                
+        return {"completion_rate": completion_rate, "current_streak": streak}
+
+    def finance_summary(self, period="monthly"):
+        """Complete finance overview"""
+        expenses = self.get_period_data('expenses', period)
+        income_data = self.get_period_data('income', period)
+        
+        total_expenses = expenses['amount'].sum() if not expenses.empty else 0
+        total_income = income_data['amount'].sum() if not income_data.empty else 0
+        savings = total_income - total_expenses
+        
+        expense_by_category = expenses.groupby('category')['amount'].sum().to_dict()
+        
+        return {
+            'total_expenses': total_expenses,
+            'total_income': total_income,
+            'savings': savings,
+            'expense_by_category': expense_by_category
+        }
+
+    def mood_trend(self):
+        """Get mood analytics"""
+        monthly = self.get_period_data('moods', 'monthly')
+        if monthly.empty:
+            return {"avg_mood": 5, "mood_distribution": {}}
+        
+        avg_mood = monthly['mood_score'].mean()
+        mood_dist = Counter(monthly['mood_score']).most_common()
+        
+        return {"avg_mood": avg_mood, "mood_distribution": dict(mood_dist)}
+
+    def show_dashboard(self):
+        """Main dashboard - ALL sections at once"""
+        print("
+" + "="*60)
+        print("🧠 COMPLETE LIFE ORGANIZER - DASHBOARD")
+        print("="*60)
+        
+        # Habits
+        habit_stats = self.habit_stats()
+        print(f"
+📊 HABITS ({habit_stats['current_streak']}🔥 streak)")
+        print(f"   Completion: {habit_stats['completion_rate']:.1f}%")
+        
+        # Finance
+        finance = self.finance_summary()
+        print(f"
+💰 FINANCE (Monthly)")
+        print(f"   Expenses: ₹{finance['total_expenses']:,.0f}")
+        print(f"   Income: ₹{finance['total_income']:,.0f}")
+        print(f"   Savings: ₹{finance['savings']:,.0f}")
+        print(f"   Top Expense: {max(finance['expense_by_category'].items(), key=lambda x: x[1], default=('None', 0))}")
+        
+        # Moods
+        mood_stats = self.mood_trend()
+        print(f"
+😊 MOODS")
+        print(f"   Average: {mood_stats['avg_mood']:.1f}/10")
+        print(f"   Distribution: {mood_stats['mood_distribution']}")
+
+    def show_charts(self):
+        """Generate all charts"""
+        fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+        fig.suptitle('Complete Life Analytics', fontsize=16)
+        
+        # 1. Expense pie chart
+        expenses = self.get_period_data('expenses', 'monthly')
+        if not expenses.empty:
+            cat_exp = expenses.groupby('category')['amount'].sum()
+            axes[0,0].pie(cat_exp.values, labels=cat_exp.index, autopct='%1.1f%%')
+            axes[0,0].set_title('Monthly Expenses by Category')
+        
+        # 2. Habit completion bar
+        habits_week = self.get_period_data('habits', 'weekly')
+        if not habits_week.empty:
+            habit_comp = habits_week.groupby('name')['completed'].mean() * 100
+            axes[0,1].bar(habit_comp.index, habit_comp.values)
+            axes[0,1].set_title('Habit Completion %')
+            axes[0,1].tick_params(axis='x', rotation=45)
+        
+        # 3. Mood trend line
+        moods = self.get_period_data('moods', 'monthly')
+        if not moods.empty:
+            mood_df = moods.set_index('date')['mood_score']
+            axes[1,0].plot(mood_df.index, mood_df.values, marker='o')
+            axes[1,0].set_title('Daily Mood Trend')
+            axes[1,0].tick_params(axis='x', rotation=45)
+        
+        # 4. Net worth trend (income - expenses)
+        plt.tight_layout()
+        plt.savefig('life_analytics.png', dpi=300, bbox_inches='tight')
+        plt.show()
+        print("📈 Charts saved as 'life_analytics.png'")
+
+# 🚀 MAIN APP - Your Complete Life Organizer
+if __name__ == "__main__":
+    app = CompleteLifeOrganizer()
+    
+    while True:
+        print("
+🎯 COMPLETE LIFE ORGANIZER")
+        print("1. 📝 Quick Log (Habit/Mood/Expense)")
+        print("2. 💰 Add Income")
+        print("3. 📊 Dashboard")
+        print("4. 📈 Show Charts")
+        print("5. ❌ Exit")
+        
+        choice = input("
+Choose (1-5): ").strip()
+        
+        if choice == "1":
+            print("
+🧠 What to log?")
+            print("a) Habit | b) Mood | c) Expense")
+            sub = input("Choose (a/b/c): ").strip().lower()
+            
+            if sub == "a":
+                name = input("Habit name: ")
+                completed = int(input("Completed? (1=Yes/0=No): "))
+                app.add_habit(name, completed=completed)
+                
+            elif sub == "b":
+                mood = int(input("Mood (1-10): "))
+                app.log_mood(mood)
+                
+            elif sub == "c":
+                amount = float(input("Amount (₹): "))
+                cat = input("Category (Food/Transport/etc): ")
+                desc = input("Description: ")
+                app.add_expense(amount, cat, desc)
+                
+        elif choice == "2":
+            amount = float(input("Income amount (₹): "))
+            source = input("Source (Salary/Freelance/etc): ")
+            desc = input("Description: ")
+            app.add_income(amount, source, desc)
+            
+        elif choice == "3":
+            app.show_dashboard()
+            
+        elif choice == "4":
+            app.show_charts()
+            
+        elif choice == "5":
+            print("✨ Data saved locally. Keep building your ₹1cr empire! 💪")
+            break
